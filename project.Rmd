@@ -1,0 +1,197 @@
+---
+title: "project exploratory analysis"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+Data <- read.csv("/Users/nolan/Desktop/classes/ML/project/nbastats2018-2019.csv")
+head(Data)
+```
+
+```{r}
+reducedData <- Data[c(2,3,5:25)]
+reducedData$Salary <- as.numeric(reducedData$Salary)
+cor(reducedData)
+pairs(reducedData[,1:11], lower.panel = NULL, main="Scatterplot of Quantitative Variables")
+pairs(reducedData[,12:23], lower.panel = NULL, main="Scatterplot of Quantitative Variables")
+```
+
+```{r}
+library(dplyr)
+Data <- Data %>%
+  mutate(medianUsage = factor(ifelse(USG > median(USG), 1, 0)))
+
+Data$medianSalary <- NULL
+
+
+head(Data)
+```
+# Part C
+
+#LOGISTIC REGRESSION
+```{r}
+set.seed(11)
+
+sample.data<-sample.int(nrow(Data), floor(.50*nrow(Data)), replace = F)
+train<-Data[sample.data, ]
+test<-Data[-sample.data, ]
+
+# predictors: points, field goal percentage, assists, free throws attempted, blocks, steals, rebounds
+result_train<-glm(medianUsage~Points+FG.+Assists+FTA+Blocks+Steals+Rebounds, family=binomial, data=train)
+result_train_summary <- summary(result_train)
+
+result_test<-glm(medianUsage~Points+FG.+Assists+FTA+Blocks+Steals+Rebounds, family=binomial, data=test)
+result_test_summary <- summary(result_test)
+
+
+```
+
+# ROC AND AUC FOR LOGISTIC MODEL 
+```{r}
+library(ROCR)
+
+preds<-predict(result_train,newdata=test, type="response")
+rates<-ROCR::prediction(preds, test$medianUsage)
+roc_result<-ROCR::performance(rates,measure="tpr", x.measure="fpr")
+
+##plot ROC curve and overlay the diagonal line for random guessing
+plot(roc_result, main="ROC Curve for Median Usage of NBA Players")
+lines(x = c(0,1), y = c(0,1), col="red")
+
+```
+```{r}
+auc<-ROCR::performance(rates, measure = "auc")
+auc@y.values
+```
+
+# ACTUAL ERROR RATE FOR LOGISTIC MODEL 
+```{r}
+# confusion matrix for logistic regression
+table(test$medianUsage, preds > 0.5 )
+```
+
+Our test error rate is 0.2183908
+
+# TODO - FIND ESTIMATED K FOLD ERROR RATE FOR LOGISTIC REGRESSION
+
+# LDA 
+# BUILD LDA MODEL 
+```{r}
+library(boot) ##for cv.glm function
+library(MASS) ##for lda function
+library(ipred) 
+
+lda.model.train <- MASS::lda(medianUsage~Points+FG.+Assists+FTA+Blocks+Steals+Rebounds, data=train)
+lda.model.train
+
+lda.model.test <- MASS::lda(medianUsage~Points+FG.+Assists+FTA+Blocks+Steals+Rebounds, data=test)
+#lda.model.test
+```
+
+# PERFORM PREDICTIONS AND FIND ACTUAL ERROR RATE FOR LDA 
+```{r}
+##predictions on training data.
+lda.test <- predict(lda.model.test)
+##Confusion matrix on training data. Rows represent actual value,
+##cols represent pred value
+mean(test$medianUsage == lda.test$class)
+```
+Our model is 0.7662835 accurate, giving us an error rate of 0.2337. 
+
+
+# ROC AND AUC FOR LDA MODEL 
+```{r}
+lda.preds<-lda.test$posterior[,2]
+rates<-ROCR::prediction(lda.preds, test$medianUsage)
+roc_result<-ROCR::performance(rates,measure="tpr", x.measure="fpr")
+plot(roc_result, main="ROC Curve for Median Usage of NBA Players")
+lines(x = c(0,1), y = c(0,1), col="red")
+```
+```{r}
+lda.auc<-ROCR::performance(rates, measure = "auc")
+lda.auc@y.values
+```
+
+# FIND ESTIMATED ERROR RATE ON LDA TEST USING K FOLD 
+```{r}
+# error rate for LDA model
+cv.da <- function(object, newdata)
+{
+return(predict(object, newdata = newdata)$class)
+}
+
+# TESTING K = 5
+ipred::errorest(medianUsage~Points+FG.+Assists+FTA+Blocks+Steals+Rebounds, data=Data, model=lda,
+estimator="cv",
+est.para=control.errorest(k=5),
+predict=cv.da)$err
+```
+
+Our estimated error rate k fold where k = 5 is 0.238921
+```{r}
+# TESTING K = 10
+ipred::errorest(medianUsage~Points+FG.+Assists+FTA+Blocks+Steals+Rebounds, data=Data, model=lda,
+estimator="cv",
+est.para=control.errorest(k=10),
+predict=cv.da)$err
+```
+Our estimated error rate k fold where k = 10 is 0.2427746
+
+# Part D
+
+IMPROVING THE MODEL 
+```{r}
+# improve the model by trying to get rid of assists and blocks
+modelImprove<-glm(medianUsage~Points+FG.+FTA+Steals+Rebounds,
+family=binomial, data=train)
+TS2<- modelImprove$dev - result_train$dev
+1-pchisq(TS2,2)
+```
+We fail to reject our null hypothesis so we conclude the reduced model is better.
+
+
+LOGISTIC MODEL 
+```{r}
+result_train_improved<-glm(medianUsage~Points+FG.+FTA+Steals+Rebounds, family=binomial, data=train)
+result_train_summary_improved <- summary(result_train_improved)
+
+result_test_improved<-glm(medianUsage~Points+FG.+FTA+Steals+Rebounds, family=binomial, data=test)
+result_test_summary_improved <- summary(result_test_improved)
+
+summary(result_train_improved)
+```
+
+ROC ON IMPROVED LOGISTIC MODEL
+```{r}
+library(ROCR)
+
+improvedPreds<-predict(result_test_improved,newdata=test, type="response")
+improvedRates<-ROCR::prediction(preds, test$medianUsage)
+improved_Roc_result<-ROCR::performance(improvedRates,measure="tpr", x.measure="fpr")
+
+##plot ROC curve and overlay the diagonal line for random guessing
+plot(improved_Roc_result, main="ROC Curve")
+lines(x = c(0,1), y = c(0,1), col="red")
+
+```
+
+AUC ON LOGISTIC 
+```{r}
+improved_Auc<-ROCR::performance(improvedRates, measure = "auc")
+improved_Auc@y.values
+```
+
+# ERROR RATE FOR LOGISTIC 
+```{r}
+table(test$medianUsage, improvedPreds > 0.5 )
+
+```
+Our actual test error rate is 0.2030
+
+# TODO : ESTIMATED ERROR RATE FOR LOGISTIC 
